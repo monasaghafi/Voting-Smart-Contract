@@ -17,14 +17,14 @@ contract VotingSystem {
     bool public votingActive;  // Indicates if voting is active
     uint public votingStartTime; // Start time of voting
     uint public votingEndTime;   // End time of voting
-    bool public chairmanCanVote = true; // Determines if the chairman can vote by default
+    bool public chairmanCanVote; // Determines if the chairman can vote
 
     mapping(address => Voter) public voters; // Mapping to track voter information
     Proposal[] public proposals;            // Array of proposals (candidates)
 
     // Events for logging actions
     event VoteCast(address voter, uint candidateIndex);
-    event VotingEnded(bytes32 winnerName, uint winnerVoteCount);
+    event VotingEnded(uint winnerIndex, bytes32 winnerName, uint winnerVoteCount);
     event TieDetected(); // Event to indicate a tie
     event VotingStarted(uint startTime, uint endTime); // Event for voting start
 
@@ -46,25 +46,32 @@ contract VotingSystem {
     }
 
     modifier eligibleVoter() {
-        require(voters[msg.sender].canVote || (msg.sender == chairman), "You are not eligible to vote.");
+        require(
+            (msg.sender == chairman && chairmanCanVote) || voters[msg.sender].canVote,
+            "You are not eligible to vote."
+        );
         require(!voters[msg.sender].hasVoted, "You have already voted.");
         _;
     }
 
     constructor(string[] memory candidateNames) {
-    require(candidateNames.length > 1, "At least two candidates are required."); // Ensure at least two candidates
+        require(candidateNames.length > 1, "There must be at least two candidates.");
+        chairman = msg.sender;
+        chairmanCanVote = true;
+        
+        // اگر مدیر بتواند رأی دهد، مقدار canVote برابر true می‌شود
+        if (chairmanCanVote) {
+            voters[chairman].canVote = true;
+        }
 
-    chairman = msg.sender;
-
-    for (uint i = 0; i < candidateNames.length; i++) {
-        proposals.push(Proposal({
-            name: stringToBytes32(candidateNames[i]), // Convert string to bytes32
-            voteCount: 0
-        }));
+        for (uint i = 0; i < candidateNames.length; i++) {
+            proposals.push(Proposal({
+                name: stringToBytes32(candidateNames[i]), // Convert string to bytes32
+                voteCount: 0
+            }));
+        }
+        votingActive = false; // Voting is initially inactive
     }
-
-    votingActive = false; // Voting is initially inactive
-}
 
 
     // Function to set the voting period
@@ -101,9 +108,10 @@ contract VotingSystem {
         emit VoteCast(msg.sender, candidateIndex);
     }
 
-    // Function to end the voting process
+        // Function to end the voting process
     function votingEnd() public onlyChairman {
-        require(votingActive, "Voting has already ended.");
+        require(votingStartTime > 0 && votingEndTime > 0, "Voting period is not set.");
+        require(votingActive, "Voting has not started or has already ended.");
 
         votingActive = false;
 
@@ -113,9 +121,26 @@ contract VotingSystem {
             emit TieDetected(); // Emit event for a tie
         } else {
             bytes32 winnerName = proposals[winningProposalIndex].name;
-            emit VotingEnded(winnerName, winningVoteCount);
+            emit VotingEnded(winningProposalIndex, winnerName, winningVoteCount);
+        }
+
+        // Reset voting data for next round
+        resetVotingData();
+    }
+
+    // Function to reset all voting-related data
+    function resetVotingData() internal {
+        // Reset proposals' vote counts
+        for (uint i = 0; i < proposals.length; i++) {
+            proposals[i].voteCount = 0;
+        }
+
+        // Reset voters' statuses
+        for (uint i = 0; i < proposals.length; i++) {
+            voters[chairman].hasVoted = false; // Reset chairman's voting status
         }
     }
+
 
     // Internal function to determine the winner
     function findWinner() internal view returns (uint winningProposalIndex, uint winningVoteCount, bool isTie) {
@@ -133,13 +158,6 @@ contract VotingSystem {
             }
         }
         return (winnerIndex, maxVotes, tie);
-    }
-
-    // Function to get details of a specific candidate
-    function getCandidate(uint index) public view returns (bytes32 name, uint voteCount) {
-        require(index < proposals.length, "Invalid candidate index.");
-        Proposal memory candidate = proposals[index];
-        return (candidate.name, candidate.voteCount);
     }
 
     // Helper function to convert string to bytes32
